@@ -5,8 +5,33 @@ import shlex
 import shutil
 import subprocess
 from typing import Dict, Optional, Sequence, Union
+from dotenv import load_dotenv
+from agents import Agent, Runner, trace, function_tool
+from pydantic import BaseModel
+from typing import Any, List, Optional, Sequence, Union, Dict
+
+load_dotenv(override=True)
 
 
+# Strict output schema (no extra keys allowed)
+class ExecutionResult(BaseModel):
+    cmd: List[str]
+    returncode: int
+    stdout: str
+    stderr: str
+    json: Optional[Any] = None
+
+    # Pydantic v2 style; for v1 use `class Config: extra = "forbid"`
+    model_config = {"extra": "forbid"}
+
+
+class EnvVar(BaseModel):
+    name: str
+    value: str
+    model_config = {"extra": "forbid"}
+
+
+@function_tool
 def run_kubectl(
     args: Union[str, Sequence[str]],
     *,
@@ -16,8 +41,8 @@ def run_kubectl(
     timeout: Optional[float] = 60.0,
     capture_output: bool = True,
     check: bool = False,
-    env: Optional[dict] = None,
-) -> Dict[str, object]:
+    env: Optional[List[EnvVar]] = None,
+) -> ExecutionResult:
     """
     Run a kubectl command safely (no shell), with optional context/namespace/kubeconfig,
     timeout, and automatic JSON parsing if the output looks like JSON.
@@ -81,14 +106,6 @@ def run_kubectl(
             except json.JSONDecodeError:
                 parsed = None
 
-    result = {
-        "cmd": cmd,
-        "returncode": completed.returncode,
-        "stdout": stdout or "",
-        "stderr": stderr or "",
-        "json": parsed,
-    }
-
     if check and completed.returncode != 0:
         # Mirror subprocess.run(check=True) behavior using CalledProcessError
         err = subprocess.CalledProcessError(
@@ -96,9 +113,16 @@ def run_kubectl(
         )
         raise err
 
-    return result
+    return ExecutionResult(
+        cmd=cmd,
+        returncode=completed.returncode,
+        stdout=stdout or "",
+        stderr=stderr or "",
+        json=parsed,
+    )
 
 
+@function_tool
 def run_helm(
     args: Union[str, Sequence[str]],
     *,
@@ -114,10 +138,10 @@ def run_helm(
     timeout: Optional[float] = 60.0,  # seconds; None = no timeout
     capture_output: bool = True,
     check: bool = False,  # raise on non-zero exit
-    env: Optional[dict] = None,  # extra env vars (e.g., HELM_*)
+    env: Optional[List[EnvVar]] = None,  # extra env vars (e.g., HELM_*)
     workdir: Optional[str] = None,  # working directory for helm
     input_data: Optional[str] = None,  # pass stdin (e.g., values via '--values -')
-) -> Dict[str, object]:
+) -> ExecutionResult:
     """
     Run a 'helm' command safely (no shell). Returns a dict:
       {
@@ -184,27 +208,44 @@ def run_helm(
             except json.JSONDecodeError:
                 parsed = None
 
-    result = {
-        "cmd": cmd,
-        "returncode": completed.returncode,
-        "stdout": stdout or "",
-        "stderr": stderr or "",
-        "json": parsed,
-    }
-
     if check and completed.returncode != 0:
         raise subprocess.CalledProcessError(
             completed.returncode, cmd, output=stdout, stderr=stderr
         )
 
-    return result
+    return ExecutionResult(
+        cmd=cmd,
+        returncode=completed.returncode,
+        stdout=stdout or "",
+        stderr=stderr or "",
+        json=parsed,
+    )
+
+
+k8s_helper_instructions = """
+    You help the user answer the questions 
+    about a namespace in the Kubernetes cluster.
+    
+    The namespace is `vvm-ci-pr-2019`.
+    The context is `gke_argussec2_us-central1_dev-gke-soc`.
+
+    You can use the following tools to get the information that can help you answer the questions:
+    - run_kubectl to run kubectl commands
+    - run_helm to run helm commands
+"""
 
 
 def main():
-    res = run_helm(
-        "list", capture_output=True, check=True, namespace="vvm-ci-pr-2019"
-    )
-    print(res)
+    print([run_kubectl, run_helm])
+
+    # k8s_helper = Agent(
+    #     name="k8s-helper",
+    #     instructions=k8s_helper_instructions,
+    #     tools=[run_kubectl, run_helm],
+    #     model="gpt-4o-mini",
+    # )
+
+    # print(k8s_helper)
 
 
 if __name__ == "__main__":
