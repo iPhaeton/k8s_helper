@@ -5,27 +5,17 @@ from agents import Agent, Runner, trace
 import gradio as gr
 
 from tools import run_kubectl, run_helm
+from instructions import k8s_helper_instructions
+from constants import MODEL_NAME
 
 load_dotenv(override=True)
 
-
-k8s_helper_instructions = """
-    You help the user answer the questions 
-    about a namespace in the Kubernetes cluster.
-    
-    The namespace is `vvm-ci-pr-2019`.
-    The context is `gke_argussec2_us-central1_dev-gke-soc`.
-
-    You can use the following tools to get the information that can help you answer the questions:
-    - run_kubectl to run kubectl commands
-    - run_helm to run helm commands
-"""
 
 k8s_helper = Agent(
     name="k8s-helper",
     instructions=k8s_helper_instructions,
     tools=[run_kubectl, run_helm],
-    model="gpt-5-mini",
+    model=MODEL_NAME,
 )
 
 

@@ -21,6 +21,29 @@ def run_kubectl(
     check: bool = False,
     env: Optional[List[EnvVar]] = None,
 ) -> ExecutionResult:
+    return run_kubectl_impl(
+        args,
+        namespace=namespace,
+        context=context,
+        kubeconfig=kubeconfig,
+        timeout=timeout,
+        capture_output=capture_output,
+        check=check,
+        env=env,
+    )
+
+
+def run_kubectl_impl(
+    args: Union[str, Sequence[str]],
+    *,
+    namespace: Optional[str] = None,
+    context: Optional[str] = None,
+    kubeconfig: Optional[str] = None,
+    timeout: Optional[float] = 60.0,
+    capture_output: bool = True,
+    check: bool = False,
+    env: Optional[List[EnvVar]] = None,
+) -> ExecutionResult:
     """
     Run a kubectl command safely (no shell), with optional context/namespace/kubeconfig,
     timeout, and automatic JSON parsing if the output looks like JSON.
@@ -102,6 +125,41 @@ def run_kubectl(
 
 @function_tool
 def run_helm(
+    args: Union[str, Sequence[str]],
+    *,
+    namespace: Optional[str] = None,  # --namespace
+    context: Optional[str] = None,  # --kube-context
+    kubeconfig: Optional[str] = None,  # --kubeconfig
+    repo_config: Optional[
+        str
+    ] = None,  # --repository-config (e.g., path/to/repositories.yaml)
+    registry_config: Optional[
+        str
+    ] = None,  # --registry-config (e.g., path/to/registry.json)
+    timeout: Optional[float] = 60.0,  # seconds; None = no timeout
+    capture_output: bool = True,
+    check: bool = False,  # raise on non-zero exit
+    env: Optional[List[EnvVar]] = None,  # extra env vars (e.g., HELM_*)
+    workdir: Optional[str] = None,  # working directory for helm
+    input_data: Optional[str] = None,  # pass stdin (e.g., values via '--values -')
+) -> ExecutionResult:
+    return run_helm_impl(
+        args,
+        namespace=namespace,
+        context=context,
+        kubeconfig=kubeconfig,
+        repo_config=repo_config,
+        registry_config=registry_config,
+        timeout=timeout,
+        capture_output=capture_output,
+        check=check,
+        env=env,
+        workdir=workdir,
+        input_data=input_data,
+    )
+
+
+def run_helm_impl(
     args: Union[str, Sequence[str]],
     *,
     namespace: Optional[str] = None,  # --namespace
