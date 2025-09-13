@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from agents import Agent, Runner, trace, function_tool
 from pydantic import BaseModel
 from typing import Any, List, Optional, Sequence, Union, Dict
+import asyncio
+import gradio as gr
 
 load_dotenv(override=True)
 
@@ -234,18 +236,33 @@ k8s_helper_instructions = """
     - run_helm to run helm commands
 """
 
+k8s_helper = Agent(
+    name="k8s-helper",
+    instructions=k8s_helper_instructions,
+    tools=[run_kubectl, run_helm],
+    model="gpt-5-mini",
+)
+
+
+async def chat(message, history):
+    with trace("K8s helper"):
+        messages = []
+        for msg in history:
+            if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
+                })
+        
+        messages.append({"role": "user", "content": message})
+        
+        response = await Runner.run(k8s_helper, messages)
+
+        return response.final_output
+
 
 def main():
-    print([run_kubectl, run_helm])
-
-    # k8s_helper = Agent(
-    #     name="k8s-helper",
-    #     instructions=k8s_helper_instructions,
-    #     tools=[run_kubectl, run_helm],
-    #     model="gpt-4o-mini",
-    # )
-
-    # print(k8s_helper)
+    gr.ChatInterface(chat, type="messages").launch()
 
 
 if __name__ == "__main__":
