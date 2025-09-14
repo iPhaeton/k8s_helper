@@ -18,3 +18,8 @@ class EnvVar(BaseModel):
     name: str
     value: str
     model_config = {"extra": "forbid"}
+
+
+class EarlyStopEvaluation(BaseModel):
+    should_stop: bool
+    reasoning: str

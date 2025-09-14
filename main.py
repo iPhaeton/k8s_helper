@@ -6,7 +6,7 @@ import gradio as gr
 
 from tools import run_kubectl, run_helm
 from instructions import k8s_helper_instructions
-from constants import MODEL_NAME
+from constants import K8S_HELPER_MODEL_NAME
 
 load_dotenv(override=True)
 
@@ -15,7 +15,7 @@ k8s_helper = Agent(
     name="k8s-helper",
     instructions=k8s_helper_instructions,
     tools=[run_kubectl, run_helm],
-    model=MODEL_NAME,
+    model=K8S_HELPER_MODEL_NAME,
 )
 
 

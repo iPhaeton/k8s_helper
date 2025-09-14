@@ -6,8 +6,9 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from tools import run_kubectl, run_helm, run_kubectl_impl, run_helm_impl
-from instructions import k8s_helper_instructions
-from constants import MODEL_NAME
+from instructions import k8s_helper_instructions, early_stop_validator_instructions
+from constants import K8S_HELPER_MODEL_NAME, EARLY_STOP_VALIDATOR_MODEL_NAME
+from interfaces import EarlyStopEvaluation
 
 load_dotenv(override=True)
 openai = OpenAI()
@@ -56,6 +57,26 @@ def handle_tool_call(tool_calls):
     return results
 
 
+def should_stop_early(question, tool_call):
+    messages = [
+        {"role": "system", "content": early_stop_validator_instructions},
+        {
+            "role": "user",
+            "content": f"""
+                Here is the user's question: {question}"
+                Here is the tool call that was made: {json.dumps(tool_call.model_dump())}.
+                Is this enough to answer the user's question?
+            """,
+        },
+    ]
+
+    response = openai.chat.completions.create(
+        model=EARLY_STOP_VALIDATOR_MODEL_NAME, messages=messages, tools=tools
+    )
+
+    return EarlyStopEvaluation.model_validate_json(response.choices[0].message.content)
+
+
 def chat(message, history):
     messages = (
         [{"role": "system", "content": k8s_helper_instructions}]
@@ -63,22 +84,43 @@ def chat(message, history):
         + [{"role": "user", "content": message}]
     )
     done = False
+    early_stop = False
+
+    step = 0
 
     while not done:
-        response = openai.chat.completions.create(
-            model=MODEL_NAME, messages=messages, tools=tools
-        )
+        step += 1
 
-        print(response.choices[0].finish_reason, response.choices[0].message)
+        response = openai.chat.completions.create(
+            model=K8S_HELPER_MODEL_NAME, messages=messages, tools=tools
+        )
 
         if response.choices[0].finish_reason == "tool_calls":
             message = response.choices[0].message
             tool_calls = message.tool_calls
+
+            if step == 1 and len(tool_calls) == 1:
+                early_stop_evaluation = should_stop_early(
+                    messages[len(messages) - 1]["content"], tool_calls[0]
+                )
+                print(
+                    f"Early stopping: {early_stop_evaluation.should_stop}.\nReason: {early_stop_evaluation.reasoning}",
+                    flush=True,
+                )
+                if early_stop_evaluation.should_stop:
+                    early_stop = True
+
             results = handle_tool_call(tool_calls)
-            messages.append(message)
-            messages.extend(results)
+
+            if early_stop:
+                stdout_content = json.loads(results[0]["content"])["stdout"]
+                return f"```\n{stdout_content}\n```"
+            else:
+                messages.append(message)
+                messages.extend(results)
         else:
             done = True
+
     return response.choices[0].message.content
 
 
