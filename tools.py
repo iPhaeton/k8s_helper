@@ -1,8 +1,8 @@
+import asyncio
 import json
 import shlex
 import shutil
 import subprocess
-from typing import Optional, Sequence, Union
 from typing import List, Optional, Sequence, Union
 from agents import function_tool
 
@@ -10,7 +10,7 @@ from interfaces import ExecutionResult, EnvVar
 
 
 @function_tool
-def run_kubectl(
+async def run_kubectl(
     args: Union[str, Sequence[str]],
     *,
     namespace: Optional[str] = None,
@@ -21,7 +21,7 @@ def run_kubectl(
     check: bool = False,
     env: Optional[List[EnvVar]] = None,
 ) -> ExecutionResult:
-    return run_kubectl_impl(
+    return await run_kubectl_impl(
         args,
         namespace=namespace,
         context=context,
@@ -33,7 +33,7 @@ def run_kubectl(
     )
 
 
-def run_kubectl_impl(
+async def run_kubectl_impl(
     args: Union[str, Sequence[str]],
     *,
     namespace: Optional[str] = None,
@@ -82,21 +82,43 @@ def run_kubectl_impl(
     if kubeconfig:
         cmd += ["--kubeconfig", kubeconfig]
 
-    run_kwargs = {
-        "env": env,
-        "timeout": timeout,
-        "shell": False,
-    }
-
     if capture_output:
-        run_kwargs.update({"text": True, "capture_output": True})
+        # Use asyncio subprocess for async execution
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(), timeout=timeout
+            )
+            stdout = stdout_bytes.decode('utf-8') if stdout_bytes else ""
+            stderr = stderr_bytes.decode('utf-8') if stderr_bytes else ""
+            returncode = process.returncode
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise subprocess.TimeoutExpired(cmd, timeout)
     else:
-        run_kwargs.update({"text": True})
-
-    completed = subprocess.run(cmd, **run_kwargs)  # type: ignore[arg-type]
-
-    stdout = completed.stdout if capture_output else ""
-    stderr = completed.stderr if capture_output else ""
+        # Use asyncio subprocess without capturing output
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            env=env,
+            stdout=None,
+            stderr=None
+        )
+        
+        try:
+            returncode = await asyncio.wait_for(process.wait(), timeout=timeout)
+            stdout = ""
+            stderr = ""
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise subprocess.TimeoutExpired(cmd, timeout)
 
     parsed = None
     if capture_output and stdout:
@@ -107,16 +129,16 @@ def run_kubectl_impl(
             except json.JSONDecodeError:
                 parsed = None
 
-    if check and completed.returncode != 0:
+    if check and returncode != 0:
         # Mirror subprocess.run(check=True) behavior using CalledProcessError
         err = subprocess.CalledProcessError(
-            completed.returncode, cmd, output=stdout, stderr=stderr
+            returncode, cmd, output=stdout, stderr=stderr
         )
         raise err
 
     return ExecutionResult(
         cmd=cmd,
-        returncode=completed.returncode,
+        returncode=returncode,
         stdout=stdout or "",
         stderr=stderr or "",
         json=parsed,
@@ -124,7 +146,7 @@ def run_kubectl_impl(
 
 
 @function_tool
-def run_helm(
+async def run_helm(
     args: Union[str, Sequence[str]],
     *,
     namespace: Optional[str] = None,  # --namespace
@@ -141,9 +163,9 @@ def run_helm(
     check: bool = False,  # raise on non-zero exit
     env: Optional[List[EnvVar]] = None,  # extra env vars (e.g., HELM_*)
     workdir: Optional[str] = None,  # working directory for helm
-    input_data: Optional[str] = None,  # pass stdin (e.g., values via '--values -')
+    input_data: Optional[str] = None,  # pass stdin
 ) -> ExecutionResult:
-    return run_helm_impl(
+    return await run_helm_impl(
         args,
         namespace=namespace,
         context=context,
@@ -159,7 +181,7 @@ def run_helm(
     )
 
 
-def run_helm_impl(
+async def run_helm_impl(
     args: Union[str, Sequence[str]],
     *,
     namespace: Optional[str] = None,  # --namespace
@@ -176,7 +198,7 @@ def run_helm_impl(
     check: bool = False,  # raise on non-zero exit
     env: Optional[List[EnvVar]] = None,  # extra env vars (e.g., HELM_*)
     workdir: Optional[str] = None,  # working directory for helm
-    input_data: Optional[str] = None,  # pass stdin (e.g., values via '--values -')
+    input_data: Optional[str] = None,  # pass stdin
 ) -> ExecutionResult:
     """
     Run a 'helm' command safely (no shell). Returns a dict:
@@ -216,27 +238,60 @@ def run_helm_impl(
     if registry_config:
         cmd += ["--registry-config", registry_config]
 
-    run_kwargs = {
-        "env": env,
-        "cwd": workdir,
-        "timeout": timeout,
-        "shell": False,  # critical: prevent shell injection
-        "text": True,  # treat stdin/stdout/stderr as text
-        "input": input_data,  # None if not provided
-    }
-
     if capture_output:
-        run_kwargs.update({"capture_output": True})
-    # else: inherit parent's stdio (live output), still text mode
-
-    completed = subprocess.run(cmd, **run_kwargs)  # type: ignore[arg-type]
-
-    stdout = completed.stdout if capture_output else ""
-    stderr = completed.stderr if capture_output else ""
+        # Use asyncio subprocess for async execution with stdin support
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            env=env,
+            cwd=workdir,
+            stdin=asyncio.subprocess.PIPE if input_data else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        try:
+            input_data_bytes = input_data.encode() if input_data else None
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(input=input_data_bytes),
+                timeout=timeout
+            )
+            stdout = stdout_bytes.decode('utf-8') if stdout_bytes else ""
+            stderr = stderr_bytes.decode('utf-8') if stderr_bytes else ""
+            returncode = process.returncode
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise subprocess.TimeoutExpired(cmd, timeout)
+    else:
+        # Use asyncio subprocess without capturing output
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            env=env,
+            cwd=workdir,
+            stdin=asyncio.subprocess.PIPE if input_data else None,
+            stdout=None,
+            stderr=None
+        )
+        
+        try:
+            if input_data:
+                await asyncio.wait_for(
+                    process.communicate(input=input_data.encode()),
+                    timeout=timeout
+                )
+            else:
+                await asyncio.wait_for(process.wait(), timeout=timeout)
+            returncode = process.returncode
+            stdout = ""
+            stderr = ""
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise subprocess.TimeoutExpired(cmd, timeout)
 
     parsed = None
     if capture_output and stdout:
-        # Best-effort JSON detection/parse (works with 'helm list -o json', etc.)
+        # Best-effort JSON detection/parse
         s = stdout.lstrip()
         if s.startswith("{") or s.startswith("["):
             try:
@@ -244,14 +299,14 @@ def run_helm_impl(
             except json.JSONDecodeError:
                 parsed = None
 
-    if check and completed.returncode != 0:
+    if check and returncode != 0:
         raise subprocess.CalledProcessError(
-            completed.returncode, cmd, output=stdout, stderr=stderr
+            returncode, cmd, output=stdout, stderr=stderr
         )
 
     return ExecutionResult(
         cmd=cmd,
-        returncode=completed.returncode,
+        returncode=returncode,
         stdout=stdout or "",
         stderr=stderr or "",
         json=parsed,

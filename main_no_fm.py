@@ -4,6 +4,7 @@ import gradio as gr
 import json
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+import asyncio
 
 from tools import run_kubectl, run_helm, run_kubectl_impl, run_helm_impl
 from instructions import k8s_helper_instructions, early_stop_validator_instructions
@@ -39,14 +40,14 @@ def get_tool_by_name(name):
     raise ValueError(f"Tool {name} not found")
 
 
-def handle_tool_call(tool_calls):
+async def handle_tool_call(tool_calls):
     results = []
     for tool_call in tool_calls:
         tool_name = tool_call.function.name
         arguments = json.loads(tool_call.function.arguments)
         print(f"Tool called: {tool_name}", flush=True)
         tool = get_tool_by_name(tool_name)
-        result = tool(**arguments) if tool else {}
+        result = await tool(**arguments) if tool else {}
         results.append(
             {
                 "role": "tool",
@@ -58,6 +59,7 @@ def handle_tool_call(tool_calls):
 
 
 async def should_stop_early(question, tool_call):
+    print("Checking for early stopping...", flush=True)
     messages = [
         {"role": "system", "content": early_stop_validator_instructions},
         {
@@ -77,6 +79,10 @@ async def should_stop_early(question, tool_call):
     return EarlyStopEvaluation.model_validate_json(response.choices[0].message.content)
 
 
+async def default_early_stop_evaluation():
+    return EarlyStopEvaluation(should_stop=False, reasoning="By default")
+
+
 async def chat(message, history):
     messages = (
         [{"role": "system", "content": k8s_helper_instructions}]
@@ -84,7 +90,6 @@ async def chat(message, history):
         + [{"role": "user", "content": message}]
     )
     done = False
-    early_stop = False
 
     step = 0
 
@@ -99,24 +104,23 @@ async def chat(message, history):
             message = response.choices[0].message
             tool_calls = message.tool_calls
 
-            early_stop_evaluation = EarlyStopEvaluation(
-                should_stop=False, reasoning="By default"
-            )
+            early_stop_evaluator = default_early_stop_evaluation()
 
             if step == 1 and len(tool_calls) == 1:
-                early_stop_evaluation = await should_stop_early(
+                early_stop_evaluator = should_stop_early(
                     messages[len(messages) - 1]["content"], tool_calls[0]
                 )
-                print(
-                    f"Early stopping: {early_stop_evaluation.should_stop}.\nReason: {early_stop_evaluation.reasoning}",
-                    flush=True,
-                )
-                if early_stop_evaluation.should_stop:
-                    early_stop = True
 
-            results = handle_tool_call(tool_calls)
+            results, early_stop_evaluation = await asyncio.gather(
+                handle_tool_call(tool_calls), early_stop_evaluator
+            )
 
-            if early_stop:
+            print(
+                f"Early stopping: {early_stop_evaluation.should_stop}.\nReason: {early_stop_evaluation.reasoning}",
+                flush=True,
+            )
+
+            if early_stop_evaluation.should_stop:
                 stdout_content = json.loads(results[0]["content"])["stdout"]
                 return f"```\n{stdout_content}\n```"
             else:
