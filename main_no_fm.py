@@ -3,7 +3,7 @@ from __future__ import annotations
 import gradio as gr
 import json
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from tools import run_kubectl, run_helm, run_kubectl_impl, run_helm_impl
 from instructions import k8s_helper_instructions, early_stop_validator_instructions
@@ -11,7 +11,7 @@ from constants import K8S_HELPER_MODEL_NAME, EARLY_STOP_VALIDATOR_MODEL_NAME
 from interfaces import EarlyStopEvaluation
 
 load_dotenv(override=True)
-openai = OpenAI()
+openai = AsyncOpenAI()
 
 run_kubectl_json = {
     "name": run_kubectl.name,
@@ -57,7 +57,7 @@ def handle_tool_call(tool_calls):
     return results
 
 
-def should_stop_early(question, tool_call):
+async def should_stop_early(question, tool_call):
     messages = [
         {"role": "system", "content": early_stop_validator_instructions},
         {
@@ -70,14 +70,14 @@ def should_stop_early(question, tool_call):
         },
     ]
 
-    response = openai.chat.completions.create(
+    response = await openai.chat.completions.create(
         model=EARLY_STOP_VALIDATOR_MODEL_NAME, messages=messages, tools=tools
     )
 
     return EarlyStopEvaluation.model_validate_json(response.choices[0].message.content)
 
 
-def chat(message, history):
+async def chat(message, history):
     messages = (
         [{"role": "system", "content": k8s_helper_instructions}]
         + history
@@ -91,7 +91,7 @@ def chat(message, history):
     while not done:
         step += 1
 
-        response = openai.chat.completions.create(
+        response = await openai.chat.completions.create(
             model=K8S_HELPER_MODEL_NAME, messages=messages, tools=tools
         )
 
@@ -99,8 +99,12 @@ def chat(message, history):
             message = response.choices[0].message
             tool_calls = message.tool_calls
 
+            early_stop_evaluation = EarlyStopEvaluation(
+                should_stop=False, reasoning="By default"
+            )
+
             if step == 1 and len(tool_calls) == 1:
-                early_stop_evaluation = should_stop_early(
+                early_stop_evaluation = await should_stop_early(
                     messages[len(messages) - 1]["content"], tool_calls[0]
                 )
                 print(
