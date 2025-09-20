@@ -111,10 +111,12 @@ async def chat(message, history):
             early_stop_evaluator = default_early_stop_evaluation()
 
             if step == 1 and len(tool_calls) == 1:
+                yield "Checking for early stopping..."
                 early_stop_evaluator = should_stop_early(
                     messages[len(messages) - 1]["content"], tool_calls[0]
                 )
 
+            yield f"Calling tool(s): {[tc.function.name for tc in tool_calls]}..."
             results, early_stop_evaluation = await asyncio.gather(
                 handle_tool_call(tool_calls), early_stop_evaluator
             )
@@ -123,17 +125,23 @@ async def chat(message, history):
                 f"Early stopping: {early_stop_evaluation.should_stop}.\nReason: {early_stop_evaluation.reasoning}",
                 flush=True,
             )
+            # yield f"""
+            #     "Early stopping: {early_stop_evaluation.should_stop}.\nReason: {early_stop_evaluation.reasoning}",
+            #     flush=True,
+            # """
 
             if early_stop_evaluation.should_stop:
                 stdout_content = json.loads(results[0]["content"])["stdout"]
-                return f"```\n{stdout_content}\n```"
+                yield f"```\n{stdout_content}\n```"
+                return
             else:
                 messages.append(message)
                 messages.extend(results)
         else:
             done = True
 
-    return response.choices[0].message.content
+    yield response.choices[0].message.content
+    return
 
 
 def main():
