@@ -86,66 +86,9 @@ async def should_stop_early(question, tool_call):
 
 
 async def default_early_stop_evaluation():
-    return EarlyStopEvaluation(should_stop=False, reasoning=DEFAULT_EARLY_STOPPING_REASONING)
-
-
-async def chat_with_early_stop(message, history):
-    """Main chat function that returns both response and early stop info"""
-    messages = (
-        [{"role": "system", "content": k8s_helper_instructions}]
-        + history
-        + [{"role": "user", "content": message}]
+    return EarlyStopEvaluation(
+        should_stop=False, reasoning=DEFAULT_EARLY_STOPPING_REASONING
     )
-    done = False
-    step = 0
-    early_stop_info = "**Early Stop Status**\n\nNo evaluation yet."
-
-    while not done:
-        step += 1
-
-        response = await openai.chat.completions.create(
-            model=K8S_HELPER_MODEL_NAME, messages=messages, tools=tools
-        )
-
-        if response.choices[0].finish_reason == "tool_calls":
-            message_obj = response.choices[0].message
-            tool_calls = message_obj.tool_calls
-
-            early_stop_evaluator = default_early_stop_evaluation()
-
-            if step == 1 and len(tool_calls) == 1:
-                early_stop_evaluator = should_stop_early(
-                    messages[len(messages) - 1]["content"], tool_calls[0]
-                )
-
-            results, early_stop_evaluation = await asyncio.gather(
-                handle_tool_call(tool_calls), early_stop_evaluator
-            )
-
-            print(
-                f"Early stopping: {early_stop_evaluation.should_stop}.\n"
-                f"Reason: {early_stop_evaluation.reasoning}",
-                flush=True,
-            )
-
-            # Update early stop information
-            if early_stop_evaluation.reasoning != DEFAULT_EARLY_STOPPING_REASONING:
-                early_stop_info = (
-                    f"**Early Stop Status**\n\n"
-                    f"**Should Stop:** {early_stop_evaluation.should_stop}\n\n"
-                    f"**Reasoning:** {early_stop_evaluation.reasoning}"
-                )
-
-            if early_stop_evaluation.should_stop:
-                stdout_content = json.loads(results[0]["content"])["stdout"]
-                return f"```\n{stdout_content}\n```", early_stop_info
-            else:
-                messages.append(message_obj)
-                messages.extend(results)
-        else:
-            done = True
-
-    return response.choices[0].message.content, early_stop_info
 
 
 async def chat_with_early_stop_streaming(message, history):
@@ -182,9 +125,10 @@ async def chat_with_early_stop_streaming(message, history):
             tool_task = asyncio.create_task(handle_tool_call(tool_calls))
 
             # Wait for early stop evaluation and yield intermediate update
-            processing_info = (
-                f"Calling tools... {[tool.function.name for tool in tool_calls]}"
-            )
+            processing_info = f"""
+                Calling tools... 
+                {'\n'.join([f'Running tool "{tool.function.name}" with args: {json.loads(tool.function.arguments)['args'][:100]}' for tool in tool_calls])}
+            """
             yield processing_info, early_stop_info
             results, early_stop_evaluation = await asyncio.gather(
                 tool_task, early_stop_evaluator
@@ -222,34 +166,21 @@ async def chat_with_early_stop_streaming(message, history):
     yield response.choices[0].message.content, early_stop_info
 
 
-async def chat(message, history, early_stop_widget):
-    """Wrapper for backward compatibility - not used in new interface"""
-    response, early_stop_info = await chat_with_early_stop(message, history)
-    yield response, gr.update(value=early_stop_info)
-
-
-async def chat_wrapper(message, history, early_stop_widget):
-    """Wrapper function to handle async chat with proper yielding"""
-    async for chat_response, early_stop_update in chat(
-        message, history, early_stop_widget
-    ):
-        yield chat_response, early_stop_update
-
-
 def main():
     with gr.Blocks(title="K8s Helper") as interface:
         gr.Markdown("# Kubernetes Helper")
 
         with gr.Row():
-            with gr.Column(scale=3):
-                chatbot = gr.Chatbot(type="messages", height=500)
+            with gr.Column(scale=10):
+                chatbot = gr.Chatbot(
+                    type="messages", height="75vh"
+                )
                 msg = gr.Textbox(
                     label="Message",
                     placeholder="Ask me about your Kubernetes cluster...",
                 )
-                clear = gr.Button("Clear")
 
-            with gr.Column(scale=1):
+            with gr.Column(scale=1, min_width='10px'):
                 early_stop_status = gr.Markdown(
                     "**Early Stop Status**\n\nNo evaluation yet.",
                     label="Early Stop Evaluation",
@@ -280,10 +211,10 @@ def main():
 
         msg.submit(respond, [msg, chatbot], [chatbot, msg, early_stop_status])
 
-        clear.click(
-            lambda: ([], "**Early Stop Status**\n\nNo evaluation yet."),
-            outputs=[chatbot, early_stop_status],
-        )
+        # clear.click(
+        #     lambda: ([], "**Early Stop Status**\n\nNo evaluation yet."),
+        #     outputs=[chatbot, early_stop_status],
+        # )
 
     interface.launch()
 
