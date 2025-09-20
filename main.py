@@ -3,10 +3,12 @@ from __future__ import annotations
 from dotenv import load_dotenv
 from agents import Agent, Runner, trace
 import gradio as gr
+import os
 
 from tools import run_kubectl, run_helm
 from instructions import k8s_helper_instructions
-from constants import K8S_HELPER_MODEL_NAME
+
+K8S_HELPER_MODEL_NAME = os.getenv("K8S_HELPER_MODEL_NAME")
 
 load_dotenv(override=True)
 

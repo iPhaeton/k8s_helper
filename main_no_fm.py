@@ -5,14 +5,18 @@ import json
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 import asyncio
+import os
 
 from tools import run_kubectl, run_helm, run_kubectl_impl, run_helm_impl
 from instructions import k8s_helper_instructions, early_stop_validator_instructions
-from constants import K8S_HELPER_MODEL_NAME, EARLY_STOP_VALIDATOR_MODEL_NAME
 from interfaces import EarlyStopEvaluation
 
 load_dotenv(override=True)
 openai = AsyncOpenAI()
+
+K8S_HELPER_MODEL_NAME = os.getenv("K8S_HELPER_MODEL_NAME")
+EARLY_STOP_VALIDATOR_MODEL_NAME = os.getenv("EARLY_STOP_VALIDATOR_MODEL_NAME")
+CONTEXT = os.getenv("CONTEXT")
 
 run_kubectl_json = {
     "name": run_kubectl.name,
