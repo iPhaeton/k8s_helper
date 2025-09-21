@@ -23,3 +23,7 @@ class EnvVar(BaseModel):
 class EarlyStopEvaluation(BaseModel):
     should_stop: bool
     reasoning: str
+
+
+class SummaryResponse(BaseModel):
+    summary: str

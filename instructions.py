@@ -35,3 +35,18 @@ early_stop_validator_instructions = """
     }}
     Respond with JSON only, without any additional text or markdown formatting.
 """
+
+
+summary_keeper_instructions = """
+    You keep a running summary of the conversation.
+    You get the previous summary and the new messages.
+    The user's messages are much more important for the summary than the assistant's messages. Take assistant's messages into account only if they contain really important information.
+    You only keep the information related to the latest user message.
+    If the previous summary doesn't have information related to the latest user message, discard the previous summary and do not mention it.
+    The summary should be concise and be no longer than 1 sentence.
+    Respond in JSON format:
+    {{
+        "summary": str # the updated summary
+    }}
+    Respond with JSON only, without any additional text or markdown formatting.
+"""
