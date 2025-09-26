@@ -65,7 +65,7 @@ async def handle_tool_call(tool_calls):
     return results
 
 
-async def should_stop_early(question, tool_call):
+async def should_stop_early(summary, question, tool_call):
     print("Checking for early stopping...", flush=True)
     messages = [
         {"role": "system", "content": early_stop_validator_instructions},
@@ -73,6 +73,7 @@ async def should_stop_early(question, tool_call):
             "role": "user",
             "content": f"""
                 Here is the user's question: {question}"
+                Here is a short summary of the previous conversation: {summary}
                 Here is the tool call that was made: {json.dumps(tool_call.model_dump())}.
                 Is this enough to answer the user's question?
             """,
@@ -123,7 +124,7 @@ async def chat_with_early_stop_streaming(message, history, current_summary):
 
             if step == 1 and len(tool_calls) == 1:
                 early_stop_evaluator = should_stop_early(
-                    messages[len(messages) - 1]["content"], tool_calls[0]
+                    current_summary, messages[len(messages) - 1]["content"], tool_calls[0]
                 )
 
             # Start tool execution

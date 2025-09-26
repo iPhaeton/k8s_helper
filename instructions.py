@@ -16,12 +16,12 @@ k8s_helper_instructions = f"""
 
 early_stop_validator_instructions = """
     You check if a tool call is enough to answer the user's question.
-    You get the user's question and a tool call that was made.
+    You get the user's question, short summary of the previous conversation and a tool call that was made.
     The user's question is always related only to the context {CONTEXT}.
     You don't know the output of the tool.
     Your job is to predict if the output of the tool will be enough to answer the user's question.
     Set should_stop to True only if you think that the output of the tool alone will answer the question.
-    If you think that the output of the tool shoulxd be processed by LLM, set should_stop to False.
+    If you think that the output of the tool shoul be processed by LLM, set should_stop to False.
     If the user asks for explainations, summaries, or next steps, set should_stop to False.
 
     The possible tools are:
