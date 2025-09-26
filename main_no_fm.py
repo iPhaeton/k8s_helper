@@ -199,12 +199,13 @@ def main():
                     label="Summary",
                 )
 
-        global current_summary
+        global current_summary, current_early_stop_info
         current_summary = ''
+        current_early_stop_info = "**Early Stop Status**\n\nNo evaluation yet."
 
         async def respond(message, history):
             """Handle chat responses and update early stop status"""
-            global current_summary
+            global current_summary, current_early_stop_info
 
             if not message:
                 yield (
@@ -225,6 +226,7 @@ def main():
                 )
             ):
                 current_summary = new_summary
+                current_early_stop_info = early_stop_info
                 summary_text = (
                     f"**Current Summary**\n\n{current_summary}"
                     if current_summary
@@ -249,17 +251,25 @@ def main():
 
         def handle_chatbot_clear(history):
             """Handle when the chatbot is cleared via built-in clear button"""
-            global current_summary
+            global current_summary, current_early_stop_info
             if not history:  # If history is empty, chatbot was cleared
                 current_summary = ''
+                current_early_stop_info = (
+                    "**Early Stop Status**\n\nNo evaluation yet."
+                )
                 return (
                     "**Early Stop Status**\n\nNo evaluation yet.",
                     "**Current Summary**\n\nNo summary yet."
                 )
-            # If history is not empty, don't change the status displays
+            # If history is not empty, return the current tracked values
+            current_summary_text = (
+                f"**Current Summary**\n\n{current_summary}"
+                if current_summary
+                else "**Current Summary**\n\nNo summary yet."
+            )
             return (
-                early_stop_status.value,
-                summary_display.value
+                current_early_stop_info,
+                current_summary_text
             )
 
         # Handle when chatbot is cleared using built-in clear button
