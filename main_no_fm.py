@@ -13,13 +13,25 @@ from interfaces import EarlyStopEvaluation
 from summary_keeper import get_summary
 
 load_dotenv(override=True)
-openai = AsyncOpenAI()
 
 K8S_HELPER_MODEL_NAME = os.getenv("K8S_HELPER_MODEL_NAME")
+K8S_HELPER_BASE_URL = os.getenv("K8S_HELPER_BASE_URL")
+K8S_HELPER_API_KEY = os.getenv("K8S_HELPER_API_KEY")
+
 EARLY_STOP_VALIDATOR_MODEL_NAME = os.getenv("EARLY_STOP_VALIDATOR_MODEL_NAME")
+EARLY_STOP_VALIDATOR_BASE_URL = os.getenv("EARLY_STOP_VALIDATOR_BASE_URL")
+EARLY_STOP_VALIDATOR_API_KEY = os.getenv("EARLY_STOP_VALIDATOR_API_KEY")
+
 CONTEXT = os.getenv("CONTEXT")
 
 DEFAULT_EARLY_STOPPING_REASONING = "By default"
+
+k8s_helper_openai = AsyncOpenAI(
+    api_key=K8S_HELPER_API_KEY, base_url=K8S_HELPER_BASE_URL
+)
+early_stop_validator_openai = AsyncOpenAI(
+    api_key=EARLY_STOP_VALIDATOR_API_KEY, base_url=EARLY_STOP_VALIDATOR_BASE_URL
+)
 
 run_kubectl_json = {
     "name": run_kubectl.name,
@@ -80,7 +92,7 @@ async def should_stop_early(summary, question, tool_call):
         },
     ]
 
-    response = await openai.chat.completions.create(
+    response = await early_stop_validator_openai.chat.completions.create(
         model=EARLY_STOP_VALIDATOR_MODEL_NAME, messages=messages, tools=tools
     )
 
@@ -105,14 +117,12 @@ async def chat_with_early_stop_streaming(message, history, current_summary):
     early_stop_info = "**Early Stop Status**\n\nNo evaluation yet."
     processing_info = "Processing..."
 
-    new_summary_promise = asyncio.create_task(
-        get_summary(current_summary, messages)
-    )
+    new_summary_promise = asyncio.create_task(get_summary(current_summary, messages))
 
     while not done:
         step += 1
 
-        response = await openai.chat.completions.create(
+        response = await k8s_helper_openai.chat.completions.create(
             model=K8S_HELPER_MODEL_NAME, messages=messages, tools=tools
         )
 
@@ -124,7 +134,9 @@ async def chat_with_early_stop_streaming(message, history, current_summary):
 
             if step == 1 and len(tool_calls) == 1:
                 early_stop_evaluator = should_stop_early(
-                    current_summary, messages[len(messages) - 1]["content"], tool_calls[0]
+                    current_summary,
+                    messages[len(messages) - 1]["content"],
+                    tool_calls[0],
                 )
 
             # Start tool execution
@@ -181,15 +193,13 @@ def main():
 
         with gr.Row():
             with gr.Column(scale=10):
-                chatbot = gr.Chatbot(
-                    type="messages", height="75vh"
-                )
+                chatbot = gr.Chatbot(type="messages", height="75vh")
                 msg = gr.Textbox(
                     label="Message",
                     placeholder="Ask me about your Kubernetes cluster...",
                 )
 
-            with gr.Column(scale=1, min_width='10px'):
+            with gr.Column(scale=1, min_width="10px"):
                 early_stop_status = gr.Markdown(
                     "**Early Stop Status**\n\nNo evaluation yet.",
                     label="Early Stop Evaluation",
@@ -200,7 +210,7 @@ def main():
                 )
 
         global current_summary, current_early_stop_info
-        current_summary = ''
+        current_summary = ""
         current_early_stop_info = "**Early Stop Status**\n\nNo evaluation yet."
 
         async def respond(message, history):
@@ -212,7 +222,7 @@ def main():
                     history,
                     "",
                     "**Early Stop Status**\n\nNo evaluation yet.",
-                    "**Current Summary**\n\nNo summary yet."
+                    "**Current Summary**\n\nNo summary yet.",
                 )
                 return
 
@@ -220,11 +230,11 @@ def main():
             new_history = history + [{"role": "user", "content": message}]
 
             # Process the chat with real-time early stop updates
-            async for response, early_stop_info, new_summary in (
-                chat_with_early_stop_streaming(
-                    message, history, current_summary
-                )
-            ):
+            async for (
+                response,
+                early_stop_info,
+                new_summary,
+            ) in chat_with_early_stop_streaming(message, history, current_summary):
                 current_summary = new_summary
                 current_early_stop_info = early_stop_info
                 summary_text = (
@@ -244,22 +254,18 @@ def main():
                     yield new_history, "", early_stop_info, summary_text
 
         msg.submit(
-            respond,
-            [msg, chatbot],
-            [chatbot, msg, early_stop_status, summary_display]
+            respond, [msg, chatbot], [chatbot, msg, early_stop_status, summary_display]
         )
 
         def handle_chatbot_clear(history):
             """Handle when the chatbot is cleared via built-in clear button"""
             global current_summary, current_early_stop_info
             if not history:  # If history is empty, chatbot was cleared
-                current_summary = ''
-                current_early_stop_info = (
-                    "**Early Stop Status**\n\nNo evaluation yet."
-                )
+                current_summary = ""
+                current_early_stop_info = "**Early Stop Status**\n\nNo evaluation yet."
                 return (
                     "**Early Stop Status**\n\nNo evaluation yet.",
-                    "**Current Summary**\n\nNo summary yet."
+                    "**Current Summary**\n\nNo summary yet.",
                 )
             # If history is not empty, return the current tracked values
             current_summary_text = (
@@ -267,16 +273,13 @@ def main():
                 if current_summary
                 else "**Current Summary**\n\nNo summary yet."
             )
-            return (
-                current_early_stop_info,
-                current_summary_text
-            )
+            return (current_early_stop_info, current_summary_text)
 
         # Handle when chatbot is cleared using built-in clear button
         chatbot.change(
             handle_chatbot_clear,
             inputs=[chatbot],
-            outputs=[early_stop_status, summary_display]
+            outputs=[early_stop_status, summary_display],
         )
 
     interface.launch()
