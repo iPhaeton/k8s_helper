@@ -3,11 +3,18 @@ import json
 import shlex
 import shutil
 import subprocess
-from typing import List, Optional, Sequence, Union
+from typing import List, Optional, Sequence, Union, Any
+import aiohttp
 from agents import function_tool
+import os
+from dotenv import load_dotenv
 
 from interfaces import ExecutionResult, EnvVar
 
+load_dotenv(override=True)
+
+grafana_url = os.getenv("GRAFANA_URL")
+grafana_session_cookie = os.getenv("GRAFANA_SESSION_COOKIE")
 
 @function_tool
 async def run_kubectl(
@@ -313,3 +320,148 @@ async def run_helm_impl(
     )
 
 
+@function_tool
+async def grafana_api_request(
+    endpoint: str,
+    method: str = "GET",
+    headers: Optional[Any] = None,
+    params: Optional[Any] = None,
+    json_data: Optional[Any] = None,
+    timeout: Optional[float] = 60.0,
+) -> ExecutionResult:
+    """
+    Make HTTP requests to Grafana API with multiple authentication options.
+    
+    Args:
+        endpoint: Grafana API endpoint, e.g. "/api/org"
+        method: HTTP method (GET, POST, PUT, DELETE, etc.)
+        headers: Additional HTTP headers dictionary
+        params: Query parameters dictionary
+        json_data: JSON payload for POST/PUT requests dictionary
+        timeout: Request timeout in seconds
+        
+    Returns:
+        ExecutionResult with response data
+        
+    """
+    return await grafana_api_request_impl(
+        endpoint=endpoint,
+        method=method,
+        headers=headers,
+        params=params,
+        json_data=json_data,
+        timeout=timeout,
+    )
+
+
+async def grafana_api_request_impl(
+    endpoint: str,
+    method: str = "GET",
+    *,
+    headers: Optional[Any] = None,
+    params: Optional[Any] = None,
+    json_data: Optional[Any] = None,
+    timeout: Optional[float] = 60.0,
+) -> ExecutionResult:
+    """
+    Implementation for making HTTP requests to Grafana API.
+    """
+    # Prepare headers
+    request_headers = headers.copy() if headers else {}
+    
+    # Authentication priority order
+    auth = None
+    auth_method = "none"
+    
+    # Handle session cookie authentication
+    request_headers["Cookie"] = grafana_session_cookie
+    auth_method = "session_cookie"
+    
+    # Ensure Content-Type for JSON requests
+    if json_data and method.upper() in ["POST", "PUT", "PATCH"]:
+        request_headers["Content-Type"] = "application/json"
+
+    url = f"{grafana_url.rstrip('/')}/{endpoint.lstrip('/')}"
+    
+    # Build command representation for consistency with other tools
+    cmd = [method.upper(), url, f"auth={auth_method}"]
+    if params:
+        cmd.append(f"params={params}")
+    if json_data:
+        cmd.append(f"json_data={json_data}")
+    
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=timeout)
+        ) as session:
+            async with session.request(
+                method=method.upper(),
+                url=url,
+                headers=request_headers,
+                params=params,
+                json=json_data,
+                auth=auth,
+            ) as response:
+                
+                response_text = await response.text()
+                
+                # Try to parse JSON response
+                parsed_json = None
+                if response_text:
+                    try:
+                        parsed_json = await response.json()
+                    except (json.JSONDecodeError, aiohttp.ContentTypeError):
+                        # If JSON parsing fails, check if it looks like JSON
+                        stripped = response_text.strip()
+                        if stripped.startswith(("{", "[")):
+                            try:
+                                parsed_json = json.loads(response_text)
+                            except json.JSONDecodeError:
+                                pass
+                
+                # Determine if this is an error response
+                is_error = response.status >= 400
+                stderr_content = ""
+                
+                if is_error:
+                    stderr_content = (
+                        f"HTTP {response.status}: {response.reason}"
+                    )
+                    if parsed_json and isinstance(parsed_json, dict):
+                        if "message" in parsed_json:
+                            stderr_content += f" - {parsed_json['message']}"
+                        elif "error" in parsed_json:
+                            stderr_content += f" - {parsed_json['error']}"
+                
+                return ExecutionResult(
+                    cmd=cmd,
+                    returncode=0 if not is_error else response.status,
+                    stdout=response_text,
+                    stderr=stderr_content,
+                    json=parsed_json,
+                )
+                
+    except aiohttp.ClientError as e:
+        return ExecutionResult(
+            cmd=cmd,
+            returncode=1,
+            stdout="",
+            stderr=f"HTTP Client Error: {str(e)}",
+            json=None,
+        )
+    except asyncio.TimeoutError:
+        return ExecutionResult(
+            cmd=cmd,
+            returncode=1,
+            stdout="",
+            stderr=f"Request timeout after {timeout} seconds",
+            json=None,
+        )
+    except Exception as e:
+        return ExecutionResult(
+            cmd=cmd,
+            returncode=1,
+            stdout="",
+            stderr=f"Unexpected error: {str(e)}",
+            json=None,
+        )

@@ -7,7 +7,14 @@ from openai import AsyncOpenAI
 import asyncio
 import os
 
-from tools import run_kubectl, run_helm, run_kubectl_impl, run_helm_impl
+from tools import (
+    run_kubectl,
+    run_helm,
+    grafana_api_request,
+    run_kubectl_impl,
+    run_helm_impl,
+    grafana_api_request_impl,
+)
 from instructions import k8s_helper_instructions, early_stop_validator_instructions
 from interfaces import EarlyStopEvaluation
 from summary_keeper import get_summary
@@ -45,10 +52,21 @@ run_helm_json = {
     "parameters": run_helm.params_json_schema,
 }
 
+grafana_api_request_json = {
+    "name": grafana_api_request.name,
+    "description": grafana_api_request.description,
+    "parameters": grafana_api_request.params_json_schema,
+}
+
 tools = [
     {"type": "function", "function": run_kubectl_json},
     {"type": "function", "function": run_helm_json},
+    {"type": "function", "function": grafana_api_request_json},
 ]
+
+print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+print(json.dumps(grafana_api_request_json, indent=2))
+print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 
 
 def get_tool_by_name(name):
@@ -56,6 +74,8 @@ def get_tool_by_name(name):
         return run_kubectl_impl
     if name == run_helm.name:
         return run_helm_impl
+    if name == grafana_api_request.name:
+        return grafana_api_request_impl
     raise ValueError(f"Tool {name} not found")
 
 
@@ -145,7 +165,7 @@ async def chat_with_early_stop_streaming(message, history, current_summary):
             # Wait for early stop evaluation and yield intermediate update
             processing_info = f"""
                 Calling tools... 
-                {'\n'.join([f'Running tool "{tool.function.name}" with args: {json.loads(tool.function.arguments)['args'][:100]}' for tool in tool_calls])}
+                {'\n'.join([f'Running tool "{tool.function.name}" with args: {json.loads(tool.function.arguments)['args'][:100] if 'args' in json.loads(tool.function.arguments) else []}' for tool in tool_calls])}
             """
             yield processing_info, early_stop_info, current_summary
             results, early_stop_evaluation = await asyncio.gather(
