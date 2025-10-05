@@ -1,4 +1,9 @@
-from constants import CONTEXT
+from dotenv import load_dotenv
+import os
+
+load_dotenv(override=True)
+
+CONTEXT = os.getenv("CONTEXT")
 
 print(f"CONTEXT: {CONTEXT}")
 
